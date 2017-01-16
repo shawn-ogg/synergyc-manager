@@ -1,0 +1,109 @@
+#!/usr/bin/env perl
+#
+# The synergyc tries quite aggressivly to reconnect to
+# a non-reachable synergy deamon.
+# This simple script checks the synergy deamon and client
+# ip addresses to decide if it should fire up the client.
+# It checks every 20 seconds by default.
+#
+# License: MIT
+# Copyright: Tobias Farrenkopf tf@emptyset.de
+#
+use strict;
+use warnings;
+
+use Getopt::Long;
+use File::Basename;
+use Socket;
+use Net::Domain qw(hostname hostfqdn hostdomain);
+use Net::Ping;
+
+use constant TIMEOUT => 20; #seconds
+
+
+sub println {
+		print "@_" if @_;
+		print "\n";
+}
+
+sub usage {
+	my $rc = shift || 0;
+
+	println("Usage:", basename($0), "[OPTIONS]");
+	println();
+	println("\t\t--server_ip\tsynergy deamon ip we try to connect to (can by more than one)");
+	println("\t\t--client_ip\tstart synergyc if we have this ip address (can be more than one)");
+	println("\t\t--verbose\tturn verbose output on");
+	
+	exit($rc);
+}
+
+
+sub getIpAddress {
+	my $host = hostfqdn();
+	my $address = inet_ntoa(
+		scalar gethostbyname( $host || 'localhost' )
+	);
+	return $address;
+}
+
+sub onlineServer {
+	my $server_ips = shift;
+	my $host;
+
+	my $p = Net::Ping->new();
+	for (@$server_ips) {
+		$host = $_ if $p->ping($_);
+	}
+	$p->close();
+
+	return $host;
+}
+
+sub synergiecIsRunning {
+	if (system("pgrep synergyc >/dev/null") == 0) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+sub haveClientIp {
+	my $client_ips = shift;
+	my $current_ip = getIpAddress();
+
+	for (@$client_ips) {
+		return 1 if $_ eq $current_ip;
+	}
+	return 0;
+}
+
+
+sub callSynergyc {
+	my $server_ip = shift;
+	println("calling synergyc $server_ip");
+	system("synergyc", "-1", $server_ip);
+}
+
+sub main {
+	my @client_ips = ();
+	my @server_ips = ();
+	my $verbose = 0;
+
+	GetOptions ("server_ip=s" => \@server_ips,
+							"client_ip=s" => \@client_ips,
+							"verbose"     => \$verbose,
+							"help"        => sub { usage(); },
+	) or usage(1);
+
+	while (1) {
+		unless (synergiecIsRunning()) {	
+			my $server = onlineServer(\@server_ips) if haveClientIp(\@client_ips);
+			callSynergyc($server) if defined $server;
+		}
+		sleep TIMEOUT;
+	}
+}
+
+
+main();
